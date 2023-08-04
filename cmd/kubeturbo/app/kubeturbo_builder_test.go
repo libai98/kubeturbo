@@ -71,3 +71,18 @@ func TestOptionsSet(t *testing.T) {
 	}
 	s.AddFlags(pflag.CommandLine)
 }
+
+func TestParseClusterConfig(t *testing.T) {
+	// Test case 1: Valid JSON data
+	data := []byte(`{"minNodes": 1, "maxNodes": 10}`)
+	expectedConfig := ClusterConfig{MinNodes: 1, MaxNodes: 10}
+
+	config, err := parseClusterConfig(data)
+	assert.NoError(t, err)
+	assert.Equal(t, expectedConfig, config, "Parsed config should match expected config")
+
+	// Test case 2: Invalid JSON data
+	invalidData := []byte(`invalid-json-data`)
+	_, err = parseClusterConfig(invalidData)
+	assert.Error(t, err, "Parsing invalid JSON data should return an error")
+}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -71,6 +72,8 @@ const (
 	DefaultDiscoverySampleIntervalSec = 60
 	DefaultGCIntervalMin              = 10
 	DefaultReadinessRetryThreshold    = 60
+	DefaultClusterMinNodes            = 1
+	DefaultClusterMaxNodes            = 1000
 )
 
 var (
@@ -148,6 +151,18 @@ type VMTServer struct {
 	// Injected Cluster Key to enable pod move across cluster
 	ClusterKeyInjected string
 
+	// Minimum number of nodes allowed in the cluster.
+	// It ensures that the cluster remains resilient and can continue its normal operations even if some nodes become
+	// unavailable due to hardware failures or other issues. The minimum number of nodes should be set based on the desired
+	// level of resiliency and the specific requirements of the applications running in the cluster.
+	ClusterMinNodes int
+
+	// Maximum number of nodes allowed in the cluster. It prevents the cluster from growing
+	//uncontrollably and helps manage the available resources efficiently. The maximum number of nodes should be set based
+	//on the available resources in the environment, such as IP addresses, CPU, memory, storage capacity, and networking bandwidth.
+	// It should also consider the application requirements and performance characteristics of the workloads running on the cluster.
+	ClusterMaxNodes int
+
 	// Force the use of self-signed certificates.
 	// The default is true.
 	ForceSelfSignedCerts bool
@@ -190,13 +205,20 @@ type VMTServer struct {
 	CleanupSccRelatedResources bool
 }
 
+type ClusterConfig struct {
+	MinNodes int `json:"minNodes"`
+	MaxNodes int `json:"maxNodes"`
+}
+
 // NewVMTServer creates a new VMTServer with default parameters
 func NewVMTServer() *VMTServer {
 	s := VMTServer{
-		Port:       KubeturboPort,
-		Address:    "127.0.0.1",
-		VMPriority: defaultVMPriority,
-		VMIsBase:   defaultVMIsBase,
+		Port:            KubeturboPort,
+		Address:         "127.0.0.1",
+		VMPriority:      defaultVMPriority,
+		VMIsBase:        defaultVMIsBase,
+		ClusterMinNodes: DefaultClusterMinNodes,
+		ClusterMaxNodes: DefaultClusterMaxNodes,
 	}
 	return &s
 }
@@ -1012,7 +1034,17 @@ func reviewSCCAccess(namespace string, kubeClient kubernetes.Interface) bool {
 	return true
 }
 
-func WatchConfigMap() {
+// Method to parse the cluster configuration
+func parseClusterConfig(data []byte) (ClusterConfig, error) {
+	var clusterConfig ClusterConfig
+	err := json.Unmarshal(data, &clusterConfig)
+	if err != nil {
+		return ClusterConfig{}, err
+	}
+	return clusterConfig, nil
+}
+
+func (s *VMTServer) WatchConfigMap() {
 	//Check if the file /etc/kubeturbo/turbo-autoreload.config exists
 	autoReloadConfigFilePath := "/etc/kubeturbo"
 	autoReloadConfigFileName := "turbo-autoreload.config"
@@ -1047,6 +1079,26 @@ func WatchConfigMap() {
 
 			}
 		}
+
+		// Parse the cluster configuration
+		clusterConfigBytes := []byte(viper.GetString("cluster"))
+		clusterConfig, err := parseClusterConfig(clusterConfigBytes)
+		if err != nil {
+			glog.Errorf("Error parsing cluster configuration: %v", err)
+			return
+		}
+
+		// Update minNodes and maxNodes from the parsed clusterConfig
+		if newMinNodes := clusterConfig.MinNodes; newMinNodes != s.ClusterMinNodes {
+			s.ClusterMinNodes = newMinNodes
+			glog.V(1).Infof("ClusterMinNodes is changed from %d to %d", s.ClusterMinNodes, newMinNodes)
+		}
+
+		if newMaxNodes := clusterConfig.MaxNodes; newMaxNodes != s.ClusterMaxNodes {
+			s.ClusterMaxNodes = newMaxNodes
+			glog.V(1).Infof("ClusterMaxNodes is changed from %d to %d", s.ClusterMaxNodes, newMaxNodes)
+		}
+
 	}
 	updateConfig() //update the logging level during startup
 	viper.OnConfigChange(func(in fsnotify.Event) {

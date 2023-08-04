@@ -106,7 +106,7 @@ func main() {
 	s := app.NewVMTServer()
 
 	logFlushFreq := initLogs(s)
-	go app.WatchConfigMap()
+	go s.WatchConfigMap()
 
 	// Launch separate goroutines to flush glog and klog
 	go wait.Forever(klog.Flush, *logFlushFreq)
